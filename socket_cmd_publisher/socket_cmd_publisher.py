@@ -54,8 +54,20 @@ class SocketCmdPublisher(Node):
 
             # 受信: axis_x, axis_y（float32, ビッグエンディアン）
             axis_x, axis_y = struct.unpack('>ff', raw)
+            self.convert_joy_to_motor_pwm(axis_x, axis_y)
 
-            # 入力補正: 上 = 前進, 右 = 右旋回（負符号を考慮）
+
+    def recv_all(self, sock, size):
+        buf = b''
+        while len(buf) < size:
+            chunk = sock.recv(size - len(buf))
+            if not chunk:
+                return None
+            buf += chunk
+        return buf
+
+    def convert_joy_to_motor_pwm(self, axis_x, axis_y):
+        # 入力補正: 上 = 前進, 右 = 右旋回（負符号を考慮）
             v = -axis_y * V_MAX
             omega = -axis_x * OMEGA_MAX
 
@@ -77,16 +89,7 @@ class SocketCmdPublisher(Node):
             pwm_msg.y = float(right_pwm) # 右モータ出力
             pwm_msg.z = 0.0              # 未使用
             self.pwm_pub.publish(pwm_msg)
-
-    def recv_all(self, sock, size):
-        buf = b''
-        while len(buf) < size:
-            chunk = sock.recv(size - len(buf))
-            if not chunk:
-                return None
-            buf += chunk
-        return buf
-
+        
 def main(args=None):
     rclpy.init(args=args)
     node = SocketCmdPublisher()
