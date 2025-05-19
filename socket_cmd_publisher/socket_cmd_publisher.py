@@ -118,6 +118,9 @@ class SocketCmdPublisher(Node):
                           for name, state in btn_state.items())
             )
             self.convert_joy_to_motor_pwm(lx, ly)
+        # while を抜けたらここに来る
+        sock.close()
+        self.get_logger().info("handle_client exited cleanly")
 
 
     def recv_all(self, sock, size):
