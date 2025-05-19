@@ -63,7 +63,7 @@ class SocketCmdPublisher(Node):
             try:
                 payload = json.loads(raw.decode('utf-8'))
             except json.JSONDecodeError:
-                self.get_logger().warning("JSON デコード失敗")
+                self.get_logger().warning("JSON decord failed...")
                 continue
 
             axes    = payload.get('axes', [])    # List[float]
@@ -106,9 +106,10 @@ class SocketCmdPublisher(Node):
             self.get_logger().info(f"D-Pad      ({dpad_x}, {dpad_y})")
             self.get_logger().info(
                 "Buttons: " +
-                ", ".join(f"{name}={'P' if state else 'R'}"
+                ", ".join(f"{name}={state}"
                           for name, state in btn_state.items())
             )
+            self.convert_joy_to_motor_pwm(lx, ly)
 
 
     def recv_all(self, sock, size):
