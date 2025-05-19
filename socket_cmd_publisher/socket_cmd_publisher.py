@@ -48,17 +48,25 @@ class SocketCmdPublisher(Node):
 
     def handle_client(self, sock):
         while True:
-            # --- ヘッダー（4バイト）でメッセージ長を受信 ---
+            # --- ヘッダー受信 ---
             raw_len = self.recv_all(sock, 4)
             if raw_len is None:
+                self.get_logger().info("Connection closed by client")
                 break
+            if raw_len == b'':
+                # タイムアウト発生 → recv_allが空返した
+                continue
+
             msg_len = struct.unpack('>L', raw_len)[0]
 
-            # --- 本体を msg_len バイト受信 ---
+            # --- 本体受信 ---
             raw = self.recv_all(sock, msg_len)
             if raw is None:
+                self.get_logger().info("Connection closed during message receive")
                 break
-
+            if raw == b'':
+                # タイムアウト → もう一度受信
+                continue
             # --- JSON デコード ---
             try:
                 payload = json.loads(raw.decode('utf-8'))
