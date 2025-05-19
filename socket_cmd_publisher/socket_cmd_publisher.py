@@ -51,28 +51,24 @@ class SocketCmdPublisher(Node):
         while True:
             raw_len = self.recv_all(sock, 4)
             if raw_len is None:
-                # クライアント切断を検出
-                self.get_logger().warning("Client disconnected, forcing sticks to 0")
-                # 切断後もループを継続したい場合はここで lx=ly=0 をセットして後続処理へ
-                lx, ly = 0.0, 0.0
-                # （必要なら他の入力も 0/False にするなど）
-                # ここで変換関数を呼ぶ例：
-                self.convert_joy_to_motor_pwm(lx, ly)
-                # あるいは continue してもう一度ループ
-                continue
+                # クライアント切断を検出 → モーター停止のため 0,0 を送ってから抜ける
+                self.get_logger().warning("Client disconnected, stopping motors")
+                self.convert_joy_to_motor_pwm(0.0, 0.0)
+                break
+
             if raw_len == b'':
-                # タイムアウト → 再度受信へ
+                # タイムアウト → 再試行
                 continue
 
             msg_len = struct.unpack('>L', raw_len)[0]
             raw = self.recv_all(sock, msg_len)
             if raw is None:
-                self.get_logger().warning("Client disconnected during payload, forcing sticks to 0")
-                lx, ly = 0.0, 0.0
-                self.convert_joy_to_motor_pwm(lx, ly)
-                continue
+                self.get_logger().warning("Client disconnected during payload, stopping motors")
+                self.convert_joy_to_motor_pwm(0.0, 0.0)
+                break
+
             if raw == b'':
-                # タイムアウト → 再受信
+                # タイムアウト → 再試行
                 continue
             # --- JSON デコード ---
             try:
@@ -125,6 +121,9 @@ class SocketCmdPublisher(Node):
                           for name, state in btn_state.items())
             )
             self.convert_joy_to_motor_pwm(lx, ly)
+         # ループを抜けたらソケットを閉じて戻る
+        sock.close()
+        self.get_logger().info("handle_client exiting, motors stopped")
 
 
     def recv_all(self, sock, size):
