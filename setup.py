@@ -10,7 +10,7 @@ setup(
     zip_safe=True,
     maintainer='nasc',
     maintainer_email='nasc@dummy.com',
-    description='Receive socket data and publish UInt8 on cmd_code',
+    description='Receive socket data and publish on cmd_code',
     license='Apache License 2.0',
     tests_require=['pytest'],
     entry_points={

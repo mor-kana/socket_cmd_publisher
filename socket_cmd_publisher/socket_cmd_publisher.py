@@ -3,7 +3,6 @@ import struct
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import UInt8
 from geometry_msgs.msg import Vector3
 
 # 設定
@@ -54,6 +53,7 @@ class SocketCmdPublisher(Node):
 
             # 受信: axis_x, axis_y（float32, ビッグエンディアン）
             axis_x, axis_y = struct.unpack('>ff', raw)
+            # self.get_logger().info(f"axis_x={axis_x:.2f}, axis_y={axis_y:.2f} ")
             self.convert_joy_to_motor_pwm(axis_x, axis_y)
 
 
@@ -67,9 +67,9 @@ class SocketCmdPublisher(Node):
         return buf
 
     def convert_joy_to_motor_pwm(self, axis_x, axis_y):
-        # 入力補正: 上 = 前進, 右 = 右旋回（負符号を考慮）
-            v = -axis_y * V_MAX
-            omega = -axis_x * OMEGA_MAX
+        # 入力補正: 上 = 前進, 右 = 右旋回
+            v = axis_y * V_MAX
+            omega = axis_x * OMEGA_MAX
 
             # 差動駆動モデルによる左右速度計算
             left_speed = v - omega
