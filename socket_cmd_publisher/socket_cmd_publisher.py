@@ -47,25 +47,32 @@ class SocketCmdPublisher(Node):
             self.get_logger().info(f'Connection closed: {client_ip}')
 
     def handle_client(self, sock):
+        sock.settimeout(1.0)
         while True:
-            # --- ヘッダー受信 ---
             raw_len = self.recv_all(sock, 4)
             if raw_len is None:
-                self.get_logger().info("Connection closed by client")
-                break
+                # クライアント切断を検出
+                self.get_logger().warning("Client disconnected, forcing sticks to 0")
+                # 切断後もループを継続したい場合はここで lx=ly=0 をセットして後続処理へ
+                lx, ly = 0.0, 0.0
+                # （必要なら他の入力も 0/False にするなど）
+                # ここで変換関数を呼ぶ例：
+                self.convert_joy_to_motor_pwm(lx, ly)
+                # あるいは continue してもう一度ループ
+                continue
             if raw_len == b'':
-                # タイムアウト発生 → recv_allが空返した
+                # タイムアウト → 再度受信へ
                 continue
 
             msg_len = struct.unpack('>L', raw_len)[0]
-
-            # --- 本体受信 ---
             raw = self.recv_all(sock, msg_len)
             if raw is None:
-                self.get_logger().info("Connection closed during message receive")
-                break
+                self.get_logger().warning("Client disconnected during payload, forcing sticks to 0")
+                lx, ly = 0.0, 0.0
+                self.convert_joy_to_motor_pwm(lx, ly)
+                continue
             if raw == b'':
-                # タイムアウト → もう一度受信
+                # タイムアウト → 再受信
                 continue
             # --- JSON デコード ---
             try:
