@@ -9,8 +9,10 @@ from geometry_msgs.msg import Vector3
 # 設定
 HOST = '0.0.0.0'             # 全インターフェイスで待ち受け
 PORT = 5000                  # ポート番号
-ALLOWED_IP = '100.113.235.4' # 許可するクライアントの IP
-
+# ALLOWED_IP = '100.113.235.4' # 許可するクライアントの IP (NGSH)
+ALLOWED_IP = '100.118.30.28' # 許可するクライアントの IP (MRKN)
+# ALLOWED_IP = '100.84.44.94'  # 許可するクライアントの IP (SNSA)
+print("Allowed ip:", ALLOWED_IP)
 # モータ出力設定
 MAX_PWM = 255
 V_MAX = 1.0
@@ -36,6 +38,7 @@ class SocketCmdPublisher(Node):
         while rclpy.ok():
             conn, addr = self.srv_sock.accept()
             client_ip, client_port = addr
+            print(f'client ip ={client_ip}')
             if client_ip != ALLOWED_IP:
                 self.get_logger().warn(f'Rejecting unauthorized IP: {client_ip}')
                 conn.close()
