@@ -1,5 +1,6 @@
 import socket
 import struct
+import json
 
 import rclpy
 from rclpy.node import Node
@@ -47,14 +48,67 @@ class SocketCmdPublisher(Node):
 
     def handle_client(self, sock):
         while True:
-            raw = self.recv_all(sock, 8)
+            # --- ヘッダー（4バイト）でメッセージ長を受信 ---
+            raw_len = self.recv_all(sock, 4)
+            if raw_len is None:
+                break
+            msg_len = struct.unpack('>L', raw_len)[0]
+
+            # --- 本体を msg_len バイト受信 ---
+            raw = self.recv_all(sock, msg_len)
             if raw is None:
                 break
 
-            # 受信: axis_x, axis_y（float32, ビッグエンディアン）
-            axis_x, axis_y = struct.unpack('>ff', raw)
-            # self.get_logger().info(f"axis_x={axis_x:.2f}, axis_y={axis_y:.2f} ")
-            self.convert_joy_to_motor_pwm(axis_x, axis_y)
+            # --- JSON デコード ---
+            try:
+                payload = json.loads(raw.decode('utf-8'))
+            except json.JSONDecodeError:
+                self.get_logger().warning("JSON デコード失敗")
+                continue
+
+            axes    = payload.get('axes', [])    # List[float]
+            hats    = payload.get('hats', [])    # List[ (int,int) ]
+            buttons = payload.get('buttons', []) # List[int]
+
+            # --- 左スティック ---
+            lx = axes[0] if len(axes) > 0 else 0.0
+            ly = axes[1] if len(axes) > 1 else 0.0
+
+            # --- 右スティック ---
+            rx = axes[2] if len(axes) > 2 else 0.0
+            ry = axes[3] if len(axes) > 3 else 0.0
+
+            # --- トリガー（LT, RT）---
+            lt = axes[4] if len(axes) > 4 else 0.0
+            rt = axes[5] if len(axes) > 5 else 0.0
+
+            # --- 十字キー（D-Pad）---
+            dpad_x, dpad_y = (hats[0] if len(hats) > 0 else (0,0))
+
+            # --- ボタン ---
+            # F310 の DirectInput モード想定: インデックス順に名前付け
+            button_names = [
+                'A','B','X','Y',     # 0-3
+                'LB','RB',           # 4-5
+                'Back','Start',      # 6-7
+                'LStick','RStick'    # 8-9
+            ]
+            btn_state = {}
+            for idx, name in enumerate(button_names):
+                btn_state[name] = (buttons[idx] == 1) if idx < len(buttons) else False
+
+            # --- ログ出力（例） ---
+            self.get_logger().info(
+                f"LeftStick  ({lx:.2f}, {ly:.2f}), "
+                f"RightStick ({rx:.2f}, {ry:.2f}), "
+                f"LT={lt:.2f}, RT={rt:.2f}"
+            )
+            self.get_logger().info(f"D-Pad      ({dpad_x}, {dpad_y})")
+            self.get_logger().info(
+                "Buttons: " +
+                ", ".join(f"{name}={'P' if state else 'R'}"
+                          for name, state in btn_state.items())
+            )
 
 
     def recv_all(self, sock, size):
