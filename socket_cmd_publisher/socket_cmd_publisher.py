@@ -7,9 +7,9 @@ from rclpy.node import Node
 from geometry_msgs.msg import Vector3
 
 # 設定
-HOST = '0.0.0.0'            # 全インターフェイスで待ち受け
-PORT = 5000                 # ポート番号
-ALLOWED_IP = '100.113.235.4'  # 許可するクライアントの IP
+HOST = '0.0.0.0'             # 全インターフェイスで待ち受け
+PORT = 5000                  # ポート番号
+ALLOWED_IP = '100.113.235.4' # 許可するクライアントの IP
 
 # モータ出力設定
 MAX_PWM = 255
@@ -47,33 +47,34 @@ class SocketCmdPublisher(Node):
             self.get_logger().info(f'Connection closed: {client_ip}')
 
     def handle_client(self, sock):
+        # タイムアウトを設定（recv が長時間ブロックしないように）
         sock.settimeout(1.0)
+
         while True:
+            # --- ヘッダー受信（4バイト）---
             raw_len = self.recv_all(sock, 4)
             if raw_len is None:
-                # クライアント切断を検出
-                self.get_logger().warning("Client disconnected, forcing sticks to 0")
-                # 切断後もループを継続したい場合はここで lx=ly=0 をセットして後続処理へ
-                lx, ly = 0.0, 0.0
-                # （必要なら他の入力も 0/False にするなど）
-                # ここで変換関数を呼ぶ例：
-                self.convert_joy_to_motor_pwm(lx, ly)
-                # あるいは continue してもう一度ループ
-                continue
+                # クライアント切断を検出 → モーター停止してループ終了
+                self.get_logger().warning("Client disconnected, stopping motors")
+                self.convert_joy_to_motor_pwm(0.0, 0.0)
+                break
             if raw_len == b'':
-                # タイムアウト → 再度受信へ
+                # タイムアウト → 再試行
                 continue
 
             msg_len = struct.unpack('>L', raw_len)[0]
+
+            # --- 本体受信 ---
             raw = self.recv_all(sock, msg_len)
             if raw is None:
-                self.get_logger().warning("Client disconnected during payload, forcing sticks to 0")
-                lx, ly = 0.0, 0.0
-                self.convert_joy_to_motor_pwm(lx, ly)
-                continue
+                # 切断検出
+                self.get_logger().warning("Client disconnected during payload, stopping motors")
+                self.convert_joy_to_motor_pwm(0.0, 0.0)
+                break
             if raw == b'':
-                # タイムアウト → 再受信
+                # タイムアウト → 再試行
                 continue
+
             # --- JSON デコード ---
             try:
                 payload = json.loads(raw.decode('utf-8'))
@@ -112,57 +113,61 @@ class SocketCmdPublisher(Node):
             for idx, name in enumerate(button_names):
                 btn_state[name] = (buttons[idx] == 1) if idx < len(buttons) else False
 
-            # --- ログ出力（例） ---
+            # ログ出力
             self.get_logger().info(
-                f"LeftStick  ({lx:.2f}, {ly:.2f}), "
-                f"RightStick ({rx:.2f}, {ry:.2f}), "
+                f"LStick  ({lx:.2f}, {ly:.2f}), "
+                f"RStick ({rx:.2f}, {ry:.2f}), "
                 f"LT={lt:.2f}, RT={rt:.2f}"
             )
-            self.get_logger().info(f"D-Pad      ({dpad_x}, {dpad_y})")
-            self.get_logger().info(
-                "Buttons: " +
-                ", ".join(f"{name}={state}"
-                          for name, state in btn_state.items())
+            self.get_logger().info(f"D-Pad({dpad_x}, {dpad_y})")
+            self.get_logger().info("Buttons: " +", ".join(f"{name}={'P' if state else 'R'}"for name, state in btn_state.items())
             )
-            self.convert_joy_to_motor_pwm(lx, ly)
-        # while を抜けたらここに来る
-        sock.close()
-        self.get_logger().info("handle_client exited cleanly")
 
+            # モーター制御関数に渡す
+            self.convert_joy_to_motor_pwm(lx, ly)
+
+        # ループを抜けたらソケットを閉じ、ノードへ制御を戻す
+        sock.close()
+        self.get_logger().info("handle_client exiting, motors stopped")
 
     def recv_all(self, sock, size):
         buf = b''
         while len(buf) < size:
-            chunk = sock.recv(size - len(buf))
+            try:
+                chunk = sock.recv(size - len(buf))
+            except socket.timeout:
+                # タイムアウト時は空バイトを返し、呼び出し元で再試行
+                return b''
             if not chunk:
+                # 切断時は None を返す
                 return None
             buf += chunk
         return buf
 
     def convert_joy_to_motor_pwm(self, axis_x, axis_y):
         # 入力補正: 上 = 前進, 右 = 右旋回
-            v = axis_y * V_MAX
-            omega = axis_x * OMEGA_MAX
+        v = axis_y * V_MAX
+        omega = axis_x * OMEGA_MAX
 
-            # 差動駆動モデルによる左右速度計算
-            left_speed = v - omega
-            right_speed = v + omega
+        # 差動駆動モデルによる左右速度計算
+        left_speed = v - omega
+        right_speed = v + omega
 
-            # PWM変換
-            scale = MAX_PWM / (V_MAX + OMEGA_MAX)
-            left_pwm = int(max(-MAX_PWM, min(MAX_PWM, left_speed * scale)))
-            right_pwm = int(max(-MAX_PWM, min(MAX_PWM, right_speed * scale)))
+        # PWM変換
+        scale = MAX_PWM / (V_MAX + OMEGA_MAX)
+        left_pwm = int(max(-MAX_PWM, min(MAX_PWM, left_speed * scale)))
+        right_pwm = int(max(-MAX_PWM, min(MAX_PWM, right_speed * scale)))
 
-            # ログ出力
-            self.get_logger().info(f"axis_x={axis_x:.2f}, axis_y={axis_y:.2f} -> L={left_pwm}, R={right_pwm}")
+        # ログ出力
+        self.get_logger().info(f"axis_x={axis_x:.2f}, axis_y={axis_y:.2f} -> L={left_pwm}, R={right_pwm}")
 
-            # Vector3メッセージとしてPublish
-            pwm_msg = Vector3()
-            pwm_msg.x = float(left_pwm)  # 左モータ出力
-            pwm_msg.y = float(right_pwm) # 右モータ出力
-            pwm_msg.z = 0.0              # 未使用
-            self.pwm_pub.publish(pwm_msg)
-        
+        # Vector3メッセージとしてPublish
+        pwm_msg = Vector3()
+        pwm_msg.x = float(left_pwm)
+        pwm_msg.y = float(right_pwm)
+        pwm_msg.z = 0.0
+        self.pwm_pub.publish(pwm_msg)
+
 def main(args=None):
     rclpy.init(args=args)
     node = SocketCmdPublisher()
@@ -172,3 +177,4 @@ def main(args=None):
         pass
     node.destroy_node()
     rclpy.shutdown()
+
