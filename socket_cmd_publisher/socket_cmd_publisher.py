@@ -7,13 +7,26 @@ from rclpy.node import Node
 from sensor_msgs.msg import Joy  # Joyメッセージを使用
 
 # 設定
-HOST = '0.0.0.0'             # 全インターフェイスで待ち受け
-PORT = 5000                  # ポート番号
-ALLOWED_IP = '100.113.235.4' # 許可するクライアントの IP
+HOST = '0.0.0.0'  # 全インターフェイスで待ち受け
+PORT = 5000       # ポート番号
+
+# IPアドレス辞書
+IP_DICT = {
+    'NGSH': '100.113.235.4',
+    'MRKN': '100.118.30.28',
+    'SNSA': '100.84.44.94'
+}
 
 class SocketCmdPublisher(Node):
     def __init__(self):
         super().__init__('socket_cmd_publisher')
+
+        # rosparamから許可IP設定キーを取得（なければMRKNをデフォルト）
+        allowed_key = self.declare_parameter('allowed_ip_key', 'MRKN').get_parameter_value().string_value
+        # IP辞書から対応IPを取得、存在しなければ空文字列（拒否扱い）
+        self.allowed_ip = IP_DICT.get(allowed_key, '')
+
+        self.get_logger().info(f"Allowed IP key: '{allowed_key}', IP address: {self.allowed_ip}")
 
         # JoyトピックのPublisher
         self.joy_pub = self.create_publisher(Joy, 'joy', 10)
@@ -31,7 +44,8 @@ class SocketCmdPublisher(Node):
         while rclpy.ok():
             conn, addr = self.srv_sock.accept()
             client_ip, client_port = addr
-            if client_ip != ALLOWED_IP:
+
+            if client_ip != self.allowed_ip:
                 self.get_logger().warn(f'Rejecting unauthorized IP: {client_ip}')
                 conn.close()
                 continue
@@ -72,7 +86,7 @@ class SocketCmdPublisher(Node):
             try:
                 payload = json.loads(raw.decode('utf-8'))
             except json.JSONDecodeError:
-                self.get_logger().warning("JSON decord failed...")
+                self.get_logger().warning("JSON decode failed...")
                 continue
 
             axes    = payload.get('axes', [])    # List[float]
