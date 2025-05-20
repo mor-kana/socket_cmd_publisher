@@ -4,24 +4,19 @@ import json
 
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import Vector3
+from sensor_msgs.msg import Joy  # Joyメッセージを使用
 
 # 設定
 HOST = '0.0.0.0'             # 全インターフェイスで待ち受け
 PORT = 5000                  # ポート番号
 ALLOWED_IP = '100.113.235.4' # 許可するクライアントの IP
 
-# モータ出力設定
-MAX_PWM = 255
-V_MAX = 1.0
-OMEGA_MAX = 1.0
-
 class SocketCmdPublisher(Node):
     def __init__(self):
         super().__init__('socket_cmd_publisher')
 
-        # トピックのPublisher
-        self.pwm_pub = self.create_publisher(Vector3, 'motor_pwm', 10)
+        # JoyトピックのPublisher
+        self.joy_pub = self.create_publisher(Joy, 'joy', 10)
 
         # ソケット初期化
         self.srv_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -54,9 +49,8 @@ class SocketCmdPublisher(Node):
             # --- ヘッダー受信（4バイト）---
             raw_len = self.recv_all(sock, 4)
             if raw_len is None:
-                # クライアント切断を検出 → モーター停止してループ終了
-                self.get_logger().warning("Client disconnected, stopping motors")
-                self.convert_joy_to_motor_pwm(0.0, 0.0)
+                # クライアント切断を検出 → ループ終了
+                self.get_logger().warning("Client disconnected")
                 break
             if raw_len == b'':
                 # タイムアウト → 再試行
@@ -68,8 +62,7 @@ class SocketCmdPublisher(Node):
             raw = self.recv_all(sock, msg_len)
             if raw is None:
                 # 切断検出
-                self.get_logger().warning("Client disconnected during payload, stopping motors")
-                self.convert_joy_to_motor_pwm(0.0, 0.0)
+                self.get_logger().warning("Client disconnected during payload")
                 break
             if raw == b'':
                 # タイムアウト → 再試行
@@ -123,12 +116,12 @@ class SocketCmdPublisher(Node):
             self.get_logger().info("Buttons: " +", ".join(f"{name}={'P' if state else 'R'}"for name, state in btn_state.items())
             )
 
-            # モーター制御関数に渡す
-            self.convert_joy_to_motor_pwm(lx, ly)
+            # Joyメッセージとしてパブリッシュ
+            self.publish_joy_message(axes, hats, buttons)
 
         # ループを抜けたらソケットを閉じ、ノードへ制御を戻す
         sock.close()
-        self.get_logger().info("handle_client exiting, motors stopped")
+        self.get_logger().info("handle_client exiting")
 
     def recv_all(self, sock, size):
         buf = b''
@@ -144,29 +137,24 @@ class SocketCmdPublisher(Node):
             buf += chunk
         return buf
 
-    def convert_joy_to_motor_pwm(self, axis_x, axis_y):
-        # 入力補正: 上 = 前進, 右 = 右旋回
-        v = axis_y * V_MAX
-        omega = axis_x * OMEGA_MAX
+    def publish_joy_message(self, axes, hats, buttons):
+        # Joyメッセージ構築
+        joy_msg = Joy()
+        joy_msg.header.stamp = self.get_clock().now().to_msg()
 
-        # 差動駆動モデルによる左右速度計算
-        left_speed = v - omega
-        right_speed = v + omega
+        # axes: [LX, LY, RX, RY, LT, RT] + D-Pad
+        joy_msg.axes = [0.0] * 8
+        for i in range(min(6, len(axes))):
+            joy_msg.axes[i] = float(axes[i])
 
-        # PWM変換
-        scale = MAX_PWM / (V_MAX + OMEGA_MAX)
-        left_pwm = int(max(-MAX_PWM, min(MAX_PWM, left_speed * scale)))
-        right_pwm = int(max(-MAX_PWM, min(MAX_PWM, right_speed * scale)))
+        if len(hats) > 0:
+            joy_msg.axes[6] = float(hats[0][0])  # D-Pad X
+            joy_msg.axes[7] = float(hats[0][1])  # D-Pad Y
 
-        # ログ出力
-        self.get_logger().info(f"axis_x={axis_x:.2f}, axis_y={axis_y:.2f} -> L={left_pwm}, R={right_pwm}")
+        joy_msg.buttons = [int(val) for val in buttons[:11]]  # 最大11ボタン（A〜RStickまで）
 
-        # Vector3メッセージとしてPublish
-        pwm_msg = Vector3()
-        pwm_msg.x = float(left_pwm)
-        pwm_msg.y = float(right_pwm)
-        pwm_msg.z = 0.0
-        self.pwm_pub.publish(pwm_msg)
+        self.joy_pub.publish(joy_msg)
+        self.get_logger().info(f"Joy message published: axes={joy_msg.axes}, buttons={joy_msg.buttons}")
 
 def main(args=None):
     rclpy.init(args=args)
@@ -177,4 +165,3 @@ def main(args=None):
         pass
     node.destroy_node()
     rclpy.shutdown()
-
